@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Tank Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+        }
+
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 15px;
+        }
+
+        .panel {
+            border: 1px solid #ccc;
+            padding: 15px;
+            width: 320px;
+            box-sizing: border-box;
+        }
+
+        .panel-graph {
+            border: 1px solid #ccc;
+            padding: 15px;
+            width: 550px;
+            box-sizing: border-box;
+        }
+
+        input[type=range] {
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        button {
+            margin-top: 10px;
+            padding: 6px 12px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Dashboard SubSystem</h1>
+    <h3 id="serverStatus">Connessione al server...</h3>
+    
+    <div class="container">
+        <div class="panel">
+            <p>Stato: <strong id="sysStatus">NORMAL</strong></p>
+            <p>Modalit&agrave;: <strong id="mode">AUTO</strong></p>
+            <button onclick="toggleMode()">Cambia in AUTO/MANUAL</button>
+            <hr>
+            <h3>Apertura Valvola: <span id="aperturaValvola">0</span>%</h3>
+            <input type="range" id="slidervalvola" min="0" max="100" value="0" 
+                   oninput="onSliderDrag(this.value)"
+                   onchange="setValve(this.value)"
+                   onmousedown="isDragging = true"
+                   onmouseup="isDragging = false"
+                   ontouchstart="isDragging = true"
+                   ontouchend="isDragging = false"
+                   disabled>
+        </div>
+
+        <div class="panel-graph">
+            <h2>Storico Livello Acqua</h2>
+            <canvas id="levelChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('levelChart').getContext('2d');
+        const levelChart = new Chart(ctx, {
+            type: 'line',
+            data: { 
+                labels: [], 
+                datasets: [{ 
+                    label: 'Livello Acqua %', 
+                    data: [], 
+                    borderColor: '#333333', 
+                    tension: 0.3
+                }] 
+            },
+            options: { 
+                scales: { 
+                    y: { min: 0, max: 100 } 
+                }, 
+                animation: false 
+            }
+        });
+
+        let currentMode = "AUTO";
+        let isDragging = false;
+
+        async function updateDashboard() {
+            try {
+                const response = await fetch('http://localhost:5000/api/state');
+                const state = await response.json();
+                
+                document.getElementById('serverStatus').innerText = "ONLINE";
+                document.getElementById('sysStatus').innerText = state.status;
+                
+                currentMode = state.wcs_mode;
+                document.getElementById('mode').innerText = currentMode;
+                
+                const slider = document.getElementById('slidervalvola');
+                slider.disabled = (currentMode === "AUTO");
+
+                if (!isDragging) {
+                    document.getElementById('aperturaValvola').innerText = state.valve_aperture;
+                    slider.value = state.valve_aperture;
+                }
+
+                if (state.history && Array.isArray(state.history)) {
+                    levelChart.data.labels = state.history.map(h => h.time);
+                    levelChart.data.datasets[0].data = state.history.map(h => h.level);
+                    levelChart.update();
+                }
+                
+            } catch (err) {
+                document.getElementById('serverStatus').innerText = "NOT AVAILABLE";
+                document.getElementById('sysStatus').innerText = "OFFLINE";
+            }
+        }
+
+        async function toggleMode() {
+            const newMode = (currentMode === "AUTO") ? "MANUAL" : "AUTO";
+            currentMode = newMode;
+
+            document.getElementById('mode').innerText = newMode;
+            document.getElementById('slidervalvola').disabled = (newMode === "AUTO");
+
+            try {
+                await fetch('http://localhost:5000/api/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: newMode })
+                });
+            } catch (error) {
+                console.error("Errore durante l'invio del comando di cambio modalità:", error);
+            }
+        }
+
+        function onSliderDrag(val) {
+            document.getElementById('aperturaValvola').innerText = val;
+        }
+
+        async function setValve(val) {
+            try {
+                await fetch('http://localhost:5000/api/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ valve: parseInt(val) })
+                });
+            } catch (error) {
+                console.error("Errore durante l'invio dell'apertura valvola:", error);
+            }
+        }
+
+        setInterval(updateDashboard, 1000);
+        updateDashboard();
+    </script>
+</body>
+</html>
